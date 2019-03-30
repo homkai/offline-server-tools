@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>通用上传文件执行器</title>
+</head>
+<body>
+<style type="text/css">
+    body > main {
+        padding: 20px;
+    }
+    div {
+        margin: 15px
+    }
+</style>
+<main id="app">
+    <h3>{{appTitle}}</h3>
+    <div>
+        1、下载<a :href="templateUrl" target="_blank">上传文件的模板</a>
+    </div>
+    <div>
+        2、补充模板的内容
+    </div>
+    <div>
+        3、上传补充后的文件
+        <div>
+            <input type="file" id="file" value="选择文件">
+            <button @click="submit" :disabled="!ready || fetching">提交</button>
+        </div>
+    </div>
+    <div>
+        4、执行结果
+        <p v-if="fetching">执行中，请稍后...</p>
+        <p v-if="!fetching" v-html="result"></p>
+    </div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/vue"></script>
+<script>
+    const app = /\??app=(.*)&?.*/.test(location.search) && location.search.replace(/\??app=(.*)&?.*/, '$1');
+    new Vue({
+        el: '#app',
+        data: {
+            ready: false,
+            appTitle: '通用上传文件执行器' + (!app ? '-初始化失败' : ''),
+            templateUrl: '#',
+            result: '',
+            fetching: false
+        },
+        created() {
+            fetch(`/config/${app}`).then(res => res.json()).then(json => {
+                this.ready = true;
+                this.appTitle = json.appTitle;
+                this.templateUrl = json.templateUrl;
+                document.title = json.appTitle;
+            });
+        },
+        methods: {
+            submit() {
+                this.fetching = true;
+                const files = document.querySelector("#file").files;
+                if (files.length < 1) {
+                    return alert('请上传文件');
+                }
+                const formData = new FormData();
+                formData.append('file', files[0]);
+                formData.append('app', app);
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(res => res.text())
+                    .then(html => this.result = html)
+                    .finally(() => this.fetching = false);
+            }
+        }
+    });
+
+</script>
+
+</body>
+</html>

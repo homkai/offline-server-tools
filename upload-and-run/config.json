@@ -1,0 +1,8 @@
+{
+  "upload-demo": {
+    "appTitle": "文件上传处理任务Demo-参考run-task-demo",
+    "templateUrl": "/templates/demo/",
+    "targetFileName": "/pathTo/upload-demo/users.{random}.csv",
+    "command": "cd /pathTo/upload-demo/; sh run.sh {targetFileName}"
+  }
+}
