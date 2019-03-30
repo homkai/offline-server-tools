@@ -13,7 +13,7 @@
 - 编译依赖 go get github.com/gin-gonic/gin
 - 后台运行启动：nohup ./upload 2>&1 &（记着chmod +x ./upload）
 - 默认端口8205，如果需要指定可以./upload 8080
-- 前端页面地址是 http://localhost:8205/?app=upload-demo，后面这个是你config.json里配置的
+- 前端页面地址是 http://localhost:8205/?app=upload-demo 后面这个是你config.json里配置的
 
 ## 效果
 ![效果图](./snapshot.png)
