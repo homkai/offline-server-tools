@@ -232,7 +232,7 @@ func calcFileMd5(filePath string) (string, error) {
 }
 
 func StartServer(conf ServerConf) {
-	md5Cache = gcache.New(100).LRU().Build()
+	md5Cache = gcache.New(100).LFU().Build()
 	setupRouter(conf)
 	err := http.ListenAndServe(conf.Server, nil)
 	if err != nil {
