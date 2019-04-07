@@ -13,7 +13,7 @@
 - 两种思路：同步源码还是同步编译产出？如果本地可以编译，本地编译可能更好使
 
 ### 目标服务器
-- 修改syncds-server.yml（推荐将其放在代码库根目录并ignore）
+- 修改syncds-server.yml
 - ./syncds server
 - 推荐后台启动 nohup ./syncds server 2>&1 &
 
