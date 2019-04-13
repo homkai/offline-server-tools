@@ -11,19 +11,17 @@ const (
 	PreLog = "[syncds INFO]"
 )
 
-type WatchConf struct {
-	IncludePaths []string `yaml:"include-paths"`
-	IncludeRegexp string `yaml:"include-regexp"`
-	ExcludeRegexp string `yaml:"exclude-regexp"`
-	Deploy string `yaml:"deploy"`
-}
-
 type ClientConf struct {
-	Name string `yaml:"name"`
-	Server string `yaml:"server"`
-	BaseDir string `yaml:"base-dir"`
-	IntervalMs int `yaml:"interval-ms"`
-	WatchList []WatchConf `yaml:"watch-list"`
+	Name              string   `yaml:"name"`
+	Server            string   `yaml:"server"`
+	BaseDir           string   `yaml:"base-dir"`
+	IntervalMs        int      `yaml:"interval-ms"`
+	IncludePaths      []string `yaml:"include-paths"`
+	IncludeFileRegexp string   `yaml:"include-file-regexp"`
+	ExcludePathRegexp string   `yaml:"exclude-path-regexp"`
+	DeployPathRegexp  string   `yaml:"deploy-path-regexp"`
+	DeployCmd         string   `yaml:"deploy-cmd"`
+	Debug             bool   `yaml:"debug"`
 }
 
 func (conf *ClientConf) getConf() *ClientConf {
@@ -31,7 +29,7 @@ func (conf *ClientConf) getConf() *ClientConf {
 	if err != nil {
 		log.Fatalf("syncds-client Get err %v ", err)
 	}
-	err = yaml.Unmarshal(yamlFile, conf)
+	err = yaml.Unmarshal([]byte(yamlFile), conf)
 	if err != nil {
 		log.Fatalf("syncds-client Unmarshal err %v", err)
 	}

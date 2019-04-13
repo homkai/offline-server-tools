@@ -3,7 +3,7 @@
 
 ## 背景与用途
 本地开发因为办公网限制，无法连db及上下游服务；堡垒机开发通过远程桌面诸多不便还挺卡。
-可以用这个工具，在你超高配的本地电脑开发，同步代码或者编译产出到线下机器，再触发部署、重启服务，还能实时看远程服务的输出日志信息
+可以用这个工具，在你超高配的本地电脑开发，同步代码或者编译产出到线下机器，再触发部署、重启服务，还能实时看远程服务的控制台输出信息
 
 ## 使用方便
 ### 本地
@@ -15,7 +15,7 @@
 ### 目标服务器
 - 修改syncds-server.yml
 - ./syncds server
-- 推荐后台启动 nohup ./syncds server 2>&1 &
+- 推荐后台启动 nohup syncds server 2>&1 &
 
 
 ## 特色
@@ -26,5 +26,5 @@
 
 ## 编译
 - 如果go编译不方便，有win10 x64、linux x64的可执行文件供备用，在bin文件夹下
-- 编译依赖 go get github.com/radovskyb/watcher github.com/bluele/gcache github.com/spf13/cobra gopkg.in/yaml.v2 github.com/emirpasic/gods 
+- 编译依赖 go get github.com/gorilla/websocket github.com/bluele/gcache github.com/spf13/cobra gopkg.in/yaml.v2
 - 编译 go build -o syncds\[.exe\] \*.go

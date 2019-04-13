@@ -5,6 +5,7 @@ import (
 	"log"
 )
 
+//func main2() {
 func main() {
 	var cmdClient = &cobra.Command{
 		Use:   "client",

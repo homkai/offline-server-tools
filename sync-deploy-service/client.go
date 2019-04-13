@@ -1,138 +1,195 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"crypto/md5"
+	"encoding/gob"
 	"encoding/hex"
-	"errors"
-	"github.com/emirpasic/gods/lists/arraylist"
-	"github.com/radovskyb/watcher"
+	"encoding/json"
+	"fmt"
+	"github.com/fsnotify/fsnotify"
+	"github.com/gorilla/websocket"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
-func StartClient(clientConf ClientConf) {
-	watch(clientConf)
+
+type (
+	Event *fsnotify.Event
+	TimeEventMap map[time.Time]Event
+	WsReqMessage struct {
+		Type string
+		Data []byte
+	}
+	WsResMessage struct {
+		Type string
+		Data string
+	}
+	DiffReq struct {
+		FileMetas []FileMeta
+	}
+	SyncReq struct {
+		DeployCmd string
+		FileMetas []FileMeta
+	}
+)
+
+
+var (
+	clientConf ClientConf
+	messageChan = make(chan WsReqMessage, 10)
+	done = make(chan struct{})
+)
+
+//func main() {
+//	var conf ClientConf
+//	conf.getConf()
+func StartClient(conf ClientConf) {
+	clientConf = conf
+
+	go watch(done)
+	go connectWs(done)
+	select {
+	case <-done:
+		log.Printf(PreError + " shutdown! please check and reboot client")
+	}
 }
 
-func watch(clientConf ClientConf) {
-	w := watcher.New()
+func watch(done chan struct{}) {
+	refreshDuration := time.Duration(clientConf.IntervalMs) * time.Millisecond
+
+	var paths []string
+	for _, includePath := range clientConf.IncludePaths {
+		path := filepath.Join(clientConf.BaseDir, includePath)
+		paths = append(paths, path)
+	}
+
+	// 监听base-dir，然后再根据include、exclude筛选
+	rw, err := New(clientConf.BaseDir, func(relativeBasePath string, isDir bool) bool {
+		isMatchExclude, _ := regexp.MatchString(clientConf.ExcludePathRegexp, relativeBasePath)
+		if isMatchExclude {
+			if clientConf.Debug {
+				log.Printf(PreLog + " isMatch %t, isMatchExclude", false)
+			}
+			return false
+		}
+		if !isDir {
+			// baseDir子层
+			if strings.ContainsAny(relativeBasePath, "/\\") {
+				if clientConf.IncludeFileRegexp == "" {
+					return true
+				}
+				isMatchInclude, _ := regexp.MatchString(clientConf.IncludeFileRegexp, relativeBasePath)
+				if clientConf.Debug {
+					log.Printf(PreLog + " isMatch %t, isMatchInclude file", isMatchInclude)
+				}
+				return isMatchInclude
+			}
+			// baseDir这一层，验证匹配includePaths是否有对应文件
+			for _, includePath := range clientConf.IncludePaths {
+				cleanIncludePath := filepath.Clean(includePath);
+				if clientConf.Debug {
+					log.Printf(PreLog + " isMatch %t, isMatchInclude dir", cleanIncludePath == relativeBasePath)
+				}
+				if cleanIncludePath == relativeBasePath {
+					return true
+				}
+			}
+			return false
+		}
+		for _, includePath := range clientConf.IncludePaths {
+			includePath = filepath.Clean(includePath);
+			if strings.HasPrefix(includePath, relativeBasePath) {
+				return true
+			}
+		}
+		if clientConf.Debug {
+			log.Printf(PreLog + " isMatch %t, includePaths dir", false)
+		}
+		return false
+	}, clientConf.Debug)
+	if err != nil {
+		log.Println(PreError, "init rw err:", err)
+	}
+	defer rw.Close()
+
+	var mut sync.Mutex
+	events := make(TimeEventMap)
 	baseAbsPath, _ := filepath.Abs(clientConf.BaseDir)
 
-	go func() {
-		for {
-			select {
-			case event := <-w.Event:
-				optType := getOptType(event.Op)
-				relativePath := strings.Replace(event.Path, baseAbsPath, "", 1)
-				// 只监听文件，跳过文件夹
-				if event.IsDir() {
-					log.Println("watcher event dir:", relativePath, event.Op.String())
-					continue
-				}
-				// 同步文件改动
-				log.Printf(PreLog + " watcher event path: %s, optType: %s", relativePath, event.Op.String())
-				fileChanges := arraylist.New()
-				fileChanges.Add(FileMeta{relativePath, optType, ""})
-				watchConf, err := getWatchConf(clientConf, event.Path)
-				if err != nil {
-					log.Fatalln(PreError, err)
-					return
-				}
-				handleChange(clientConf, watchConf, fileChanges)
-			case err := <-w.Error:
-				log.Println(PreError, "watcher error:", err)
-			case <-w.Closed:
-				return
-			}
-		}
-	}()
+	// Collect the events for the last n seconds, repeatedly
+	// Runs in the background
+	CollectFileChangeEvents(rw, &mut, events, done, refreshDuration)
+	log.Printf(PreLog + " start watch at: %s", baseAbsPath)
 
-	// add watch paths
-	for _, watchConf := range clientConf.WatchList {
-		for _, includePath := range watchConf.IncludePaths {
-			if strings.HasPrefix(includePath, "/") {
-				log.Fatalln(PreError, "`include-paths` must be relative paths! err path:", includePath)
+	// Serve events
+	ticker := time.NewTicker(refreshDuration)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			log.Printf(PreError + " watch done")
+			return
+		case <-ticker.C:
+			if len(events) == 0 {
+				continue
 			}
-			if strings.Contains(includePath, "..") {
-				log.Fatalln(PreError, "`include-paths` not support `../`! err path:", includePath)
-			}
-			relativePath := filepath.Join(clientConf.BaseDir, includePath)
-			fileInfo, err := os.Lstat(relativePath)
-			if err != nil {
-				log.Fatalln(PreError, "relativePath is illegal, err path:", relativePath)
-			}
-			if fileInfo.IsDir() {
-				if err := w.AddRecursive(relativePath); err != nil {
-					log.Fatalln(PreError, "watch dir relativePath error, err path:", relativePath)
-				}
-			} else {
-				if err := w.Add(relativePath); err != nil {
-					log.Fatalln(PreError, "watch file relativePath error, err path:", relativePath)
-				}
-			}
-		}
-		if watchConf.IncludeRegexp != "" || watchConf.ExcludeRegexp != "" {
-			w.AddFilterHook(func(fileInfo os.FileInfo, fullPath string) error {
-				for _, includePath := range watchConf.IncludePaths {
-					absPath, _ := filepath.Abs(filepath.Join(clientConf.BaseDir, includePath))
-					if strings.HasPrefix(fullPath, absPath) {
-						relativePath := strings.Replace(fullPath, absPath, "", 1)
-						if watchConf.IncludeRegexp != "" {
-							reg := regexp.MustCompile(watchConf.IncludeRegexp)
-							if !reg.MatchString(relativePath) {
-								return watcher.ErrSkip
-							}
-						}
-						if watchConf.ExcludeRegexp != "" {
-							reg := regexp.MustCompile(watchConf.ExcludeRegexp)
-							if reg.MatchString(relativePath) {
-								return watcher.ErrSkip
-							}
-						}
+			mut.Lock()
+			var fileChanges []FileMeta
+			// Remove old keys
+			RemoveOldEvents(&events, refreshDuration)
+			for _, ev := range events {
+				eventAbsPath, _ := filepath.Abs(ev.Name)
+				filePath := strings.Replace(eventAbsPath, baseAbsPath, "", 1)
+				log.Printf(PreLog + " change filePath: %s, op: %v", filePath, ev.Op)
+				// Avoid sending several events for the same filename
+				existed := false
+				for i := 0; i < len(fileChanges); i++ {
+					if fileChanges[i].FilePath == filePath {
+						existed = true
+						break
 					}
 				}
-				return nil
-			})
+				if existed {
+					continue
+				}
+				var optType int
+				if ev.Op == fsnotify.Remove {
+					optType = OptRemove
+				} else {
+					optType = OptWrite
+					fileInfo, err := os.Lstat(ev.Name)
+					if err != nil {
+						log.Println("read file err", filePath)
+					}
+					// 只监听文件，跳过文件夹
+					if err == nil && fileInfo.IsDir() {
+						log.Println(PreLog, "IsDir")
+						continue
+					}
+				}
+				// 同步文件改动
+				fileChanges = append(fileChanges, FileMeta{filePath, optType, "", nil})
+			}
+			if len(fileChanges) > 0 {
+				handleChanges(fileChanges)
+			}
+			mut.Unlock()
 		}
-	}
-
-	// Start the watching process - it'll check for changes every 100ms.
-	if err := w.Start(time.Duration(clientConf.IntervalMs) * time.Millisecond); err != nil {
-		log.Fatalln(err)
 	}
 }
 
-func handleChange(clientConf ClientConf, watchConf WatchConf, fileChanges *arraylist.List) {
-	// 预先diff，避免重复提交
-	noDiffs, err := diff(clientConf, fileChanges)
-	log.Println("no diff files", noDiffs.Values())
-	if err == nil {
-		// 过滤不需要同步的文件
-		fileChanges = fileChanges.Select(func(index int, value interface{}) bool {
-			return !noDiffs.Contains(value.(FileMeta).FilePath)
-		})
-		if fileChanges.Empty() {
-			log.Println("skip sync")
-			return
-		}
-	}
-	// 同步文件
-	sync(clientConf, watchConf, fileChanges)
-}
-
-func diff(clientConf ClientConf, fileChanges *arraylist.List) (*arraylist.List, error) {
-	diffService := "http://" + clientConf.Server + "/diff"
-
-	toDiffs := arraylist.New()
-	for _, fileMeta := range fileChanges.Values() {
-		fileMeta := fileMeta.(FileMeta)
+func handleChanges(fileChanges []FileMeta) {
+	var filePaths []string
+	for index, fileMeta := range fileChanges{
 		if fileMeta.OptType == OptRemove {
 			continue
 		}
@@ -149,66 +206,162 @@ func diff(clientConf ClientConf, fileChanges *arraylist.List) (*arraylist.List, 
 			continue
 		}
 		md5Code := hex.EncodeToString(md5hash.Sum(nil))
-		toDiffs.Add(FileMeta{fileMeta.FilePath, OptWrite, md5Code})
+		fileMeta.Md5Code = md5Code
+		fileChanges[index] = fileMeta
+		filePaths = append(filePaths, fileMeta.FilePath)
 	}
 
-	fileMetasJson, _ := toDiffs.ToJSON()
-	params := map[string]string{
-		"fileMetas": string(fileMetasJson),
-	}
-	resp, err := Post(diffService, params)
-
-	if err != nil {
-		log.Println("post err", err)
-		return nil, err
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	noDiffs := arraylist.New()
-	err = noDiffs.FromJSON(body)
-	if err != nil {
-		log.Println("resp err", err)
-		return nil, err
+	log.Printf(PreLog + " diff files: %v", filePaths)
+	req := DiffReq {
+		fileChanges,
 	}
 
-	return noDiffs, nil
+	buf := &bytes.Buffer{}
+	_ = gob.NewEncoder(buf).Encode(req)
+	wsMsg := WsReqMessage{
+		"diff",
+		buf.Bytes(),
+	}
+
+	messageChan <- wsMsg
 }
 
-func sync(clientConf ClientConf, watchConf WatchConf, fileChanges *arraylist.List) {
-	syncService := "http://" + clientConf.Server + "/sync"
-
-	fileMetasJson, _ := fileChanges.ToJSON()
-
-	params := map[string]string {
-		"deploy": watchConf.Deploy,
-		"fileMetas": string(fileMetasJson),
+func syncChanges(fileChanges []FileMeta) {
+	deployCmd := ""
+	var filePaths []string
+	for index, fileMeta := range fileChanges {
+		filePaths = append(filePaths, fileMeta.FilePath)
+		if fileMeta.OptType == OptRemove {
+			continue
+		}
+		filename := filepath.Join(clientConf.BaseDir, fileMeta.FilePath)
+		fileData, err := ioutil.ReadFile(filename)
+		if err != nil {
+			log.Println("file open err", err)
+			continue
+		}
+		fileMeta.FileData = fileData
+		fileChanges[index] = fileMeta
+		// 是否触发deploy-cmd
+		if clientConf.DeployPathRegexp != "" {
+			isMatch, _ := regexp.MatchString(clientConf.DeployPathRegexp, fileMeta.FilePath)
+			if isMatch {
+				deployCmd = clientConf.DeployCmd
+			}
+		} else {
+			deployCmd = clientConf.DeployCmd
+		}
 	}
-	resp, err := PostFile(syncService, params, fileChanges, clientConf.BaseDir)
 
+	log.Printf(PreLog + " sync begin, plz wait, files: %v, deploy? %t", filePaths, len(deployCmd) > 0)
+	req := SyncReq {
+		deployCmd,
+		fileChanges,
+	}
+	buf := &bytes.Buffer{}
+	_ = gob.NewEncoder(buf).Encode(req)
+	wsMsg := WsReqMessage{
+		"sync",
+		buf.Bytes(),
+	}
+
+	messageChan <- wsMsg
+}
+
+func connectWs(done chan struct{}) {
+	u := url.URL{Scheme: "ws", Host: clientConf.Server, Path: "/ws"}
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Println("post err", err)
+		log.Fatal("dial:", err)
 	}
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		log.Println("syncds resp:", scanner.Text())
-	}
-}
+	defer c.Close()
+	_ = c.WriteMessage(websocket.TextMessage, []byte("set up connection from client"));
+	log.Printf(PreLog + " start ws connection to server at: %s", clientConf.Server)
 
-func getOptType(op watcher.Op) int  {
-	if op == watcher.Remove || op == watcher.Rename || op == watcher.Move {
-		return OptRemove
-	}
-	return OptWrite
-}
+	go func() {
+		for {
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				log.Printf(PreError + " read message from server failed, err: %v", err)
+				done <- struct{}{}
+				return
+			}
+			var wsResMsg WsResMessage
+			_ = json.Unmarshal(message, &wsResMsg)
+			switch wsResMsg.Type {
+			case "diffRes":
+				data := wsResMsg.Data
+				var fileMetas []FileMeta
+				_ = json.Unmarshal([]byte(data), &fileMetas)
+				if len(fileMetas) > 0 {
+					syncChanges(fileMetas)
+				} else {
+					log.Printf(PreLog + " no diff, skiped all changed fileds")
+				}
+				break
+			case "syncRes":
+				data := wsResMsg.Data
+				log.Printf(PreLog + " syncRes %s", data)
+				break
+			case "deployStdout":
+				fmt.Printf("[stdout] %s\n", wsResMsg.Data)
+				break
+			case "deployStderr":
+				fmt.Printf("[stderr] %s\n", wsResMsg.Data)
+				break
+			}
+		}
+	}()
 
-func getWatchConf(clientConf ClientConf, fullPath string) (WatchConf, error) {
-	for _, watchConf := range clientConf.WatchList {
-		for _, includePath := range watchConf.IncludePaths {
-			absPath, _ := filepath.Abs(filepath.Join(clientConf.BaseDir, includePath))
-			if strings.HasPrefix(fullPath, absPath) {
-				return watchConf, nil
+	for {
+		select {
+		case <-done:
+			_ = c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"))
+			return
+		case wsMsg := <-messageChan:
+			buf := &bytes.Buffer{}
+			err = gob.NewEncoder(buf).Encode(wsMsg)
+			if err != nil {
+				log.Printf("binary Encode err %v", err)
+			}
+			err = c.WriteMessage(websocket.BinaryMessage, buf.Bytes())
+			if err != nil {
+				log.Println("write:", err)
+				return
 			}
 		}
 	}
-	return WatchConf{}, errors.New("fullPath not match any include-paths rule, trigger fullPath:" + fullPath)
+}
+
+func CollectFileChangeEvents(watcher *ReWatcher, mut *sync.Mutex, events TimeEventMap, done chan struct{}, maxAge time.Duration) {
+	go func() {
+		for {
+			select {
+			case ev, ok := <-watcher.Events():
+				if !ok {
+					log.Printf(PreError + " watch done")
+					done <- struct{}{}
+					return
+				}
+				if ev.Error != nil {
+					log.Println(PreError, "watch err:", ev.Error)
+					continue
+				}
+				mut.Lock()
+				RemoveOldEvents(&events, maxAge)
+				events[time.Now()] = Event(ev.Body)
+				mut.Unlock()
+			}
+		}
+	}()
+}
+
+func RemoveOldEvents(events *TimeEventMap, maxAge time.Duration) {
+	now := time.Now()
+	longTimeAgo := now.Add(-maxAge)
+	for t := range *events {
+		if t.Before(longTimeAgo) {
+			delete(*events, t)
+		}
+	}
 }

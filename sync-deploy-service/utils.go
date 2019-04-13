@@ -1,19 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"github.com/emirpasic/gods/lists/arraylist"
-	"io"
 	"io/ioutil"
-	"log"
-	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 func GenDirIndex(w http.ResponseWriter, filePath string, urlPath string) {
@@ -36,7 +30,7 @@ func GenDirIndex(w http.ResponseWriter, filePath string, urlPath string) {
 		if file.IsDir() {
 			name += "/"
 		}
-		urlObj := url.URL{Path: urlPath + "/" + name}
+		urlObj := url.URL{Path: "/" + urlPath + name}
 		href := urlObj.String()
 		fileSize := FormatFileSize(file.Size())
 		modTime := file.ModTime().Format("2006-01-02 15:04:05")
@@ -57,44 +51,7 @@ func FormatFileSize(fileSize int64) string {
 	return size
 }
 
-func Post(url string, params map[string]string) (*http.Response, error) {
-	bodyBuf := &bytes.Buffer{}
-	bodyWriter := multipart.NewWriter(bodyBuf)
-	for key, value := range params {
-		_ = bodyWriter.WriteField(key, value)
-	}
-
-	contentType := bodyWriter.FormDataContentType()
-	_ = bodyWriter.Close()
-	return http.Post(url, contentType, bodyBuf)
+func formatFilePath(path string) string {
+	return strings.Replace(path, "\\", "/", -1)
 }
 
-func PostFile(url string, params map[string]string, fileChanges *arraylist.List, baseDir string) (*http.Response, error) {
-	bodyBuf := &bytes.Buffer{}
-	bodyWriter := multipart.NewWriter(bodyBuf)
-
-	for _, fileMeta := range fileChanges.Values() {
-		fileMeta := fileMeta.(FileMeta)
-		if fileMeta.OptType == OptRemove {
-			continue
-		}
-		file, err := os.Open(filepath.Join(baseDir, fileMeta.FilePath))
-		if err != nil {
-			log.Println("file open err", err)
-		}
-		fileWriter, _ := bodyWriter.CreateFormFile(fileMeta.FilePath, filepath.Base(fileMeta.FilePath))
-		_, err = io.Copy(fileWriter, file)
-		if err != nil {
-			log.Println("file copy err", err)
-		}
-		_ = file.Close()
-	}
-
-	for key, value := range params {
-		_ = bodyWriter.WriteField(key, value)
-	}
-
-	contentType := bodyWriter.FormDataContentType()
-	_ = bodyWriter.Close()
-	return http.Post(url, contentType, bodyBuf)
-}

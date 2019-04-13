@@ -1,7 +1,7 @@
 name: orianna
-# ip要能client跟server在同一个局域网，基于http服务传输，可以填安全允许的http端口
-server: ip:8003
+# ip要能client跟server在同一个局域网或外网，基于http服务传输，可以填安全允许的http端口
+server: 127.0.0.1:8003
 # 接收同步过来文件的root文件夹
 base-dir: ./demo-watch/dist
-# 是否开启http服务，列出base-dir目录，方便查看文件列表及更新时间等
+# 是否开启http服务http://server，列出base-dir目录，方便查看文件列表及更新时间等
 show-dir-list: true
