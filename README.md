@@ -16,10 +16,12 @@ golang可以方便地build成跨平台的可执行文件，并且体积很小，
 
 ### 特色
 - 基于http协议(websocket)传输，服务端可以使用安全策略开放的http端口
-- 将远程deploy命令的stdout实时同步到本地，方便根据日志开发调试
+- 将远程deploy命令的stdout、stderr实时同步到本地，方便根据日志开发调试
 - 支持web页面列出服务器的同步目录，方便查看文件列表和更新时间等
 - 同步前根据md5预检查是否需要传输文件，LRU缓存
 
+### 效果
+![效果图](./sync-deploy-service/snapshot.jpg)
 
 
 ## 2、简单文件上传执行器

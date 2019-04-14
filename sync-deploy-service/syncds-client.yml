@@ -18,5 +18,6 @@ include-file-regexp: \.(yml|properties|jar)$
 exclude-path-regexp: (__)$
 # 选填，触发deploy的path正则，如果不填则所有文件改动都触发deploy
 deploy-path-regexp: \.jar$
-# 类似 java -jar xx-app.jar，支持本地实时滚动deploy命令的stdout
+# 部署脚本、重启服务命令，支持本地实时滚动deploy命令的stdout、stderr
+# deploy-cmd: "ps -ef|grep xx-app.jar|awk '{print $2}'|xargs kill -9; java -jar xx-app/target/xx-app.jar"
 deploy-cmd: "java -jar xx-app/target/xx-app.jar"

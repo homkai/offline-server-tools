@@ -11,6 +11,7 @@
 - ./syncds.exe client
 - 跨平台，windows、mac、linux
 - 两种思路：同步源码还是同步编译产出？如果本地可以编译，本地编译可能更好使
+- 一般可以使用idea编辑器的Terminal启动脚本，然后就可以实时看远程服务的log
 
 ### 目标服务器
 - 修改syncds-server.yml
@@ -20,7 +21,7 @@
 
 ## 特色
 - 基于http协议(websocket)传输，服务端可以使用安全策略开放的http端口
-- 将远程deploy命令的stdout实时同步到本地，方便根据日志开发调试，避免本地和开发机之间频繁切换
+- 将远程deploy命令的stdout、stderr实时同步到本地，方便根据日志开发调试，避免本地和开发机之间频繁切换
 - 支持web页面列出服务器的同步目录，方便查看文件列表和更新时间等，访问server.yml的http://ip:port
 - 同步前根据md5预检查是否需要传输文件，LFU缓存
 
@@ -28,3 +29,6 @@
 - 如果go编译不方便，有win10 x64、linux x64的可执行文件供备用，在bin文件夹下
 - 编译依赖 go get github.com/gorilla/websocket github.com/bluele/gcache github.com/spf13/cobra gopkg.in/yaml.v2
 - 编译 go build -o syncds\[.exe\] \*.go
+
+## 效果
+![效果图](./snapshot.png)
