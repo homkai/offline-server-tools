@@ -31,4 +31,4 @@
 - 编译 go build -o syncds\[.exe\] \*.go
 
 ## 效果
-![效果图](./snapshot.png)
+![效果图](./snapshot.jpg)
