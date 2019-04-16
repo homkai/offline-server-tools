@@ -37,8 +37,9 @@ type (
 		FileMetas []FileMeta
 	}
 	SyncReq struct {
-		DeployCmd string
 		FileMetas []FileMeta
+		DeployCmd string
+		DeployKillCmd string
 	}
 )
 
@@ -255,8 +256,9 @@ func syncChanges(fileChanges []FileMeta) {
 
 	log.Printf(PreLog + " sync begin, plz wait, files: %v, deploy? %t", filePaths, len(deployCmd) > 0)
 	req := SyncReq {
-		deployCmd,
 		fileChanges,
+		deployCmd,
+		clientConf.DeployKillCmd,
 	}
 	buf := &bytes.Buffer{}
 	_ = gob.NewEncoder(buf).Encode(req)

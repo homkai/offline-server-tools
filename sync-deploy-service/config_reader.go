@@ -21,6 +21,7 @@ type ClientConf struct {
 	ExcludePathRegexp string   `yaml:"exclude-path-regexp"`
 	DeployPathRegexp  string   `yaml:"deploy-path-regexp"`
 	DeployCmd         string   `yaml:"deploy-cmd"`
+	DeployKillCmd     string   `yaml:"deploy-kill-cmd"`
 	Debug             bool   `yaml:"debug"`
 }
 

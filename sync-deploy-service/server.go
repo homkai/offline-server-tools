@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,7 @@ var (
 	md5Cache gcache.Cache
 	executingCmd *exec.Cmd
 	defaultConn *websocket.Conn
+	mut sync.Mutex
 )
 
 
@@ -109,15 +111,7 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				syncFileMetasBytes, _ := json.Marshal(needSyncs)
-				res := WsResMessage{
-					"diffRes",
-					string(syncFileMetasBytes),
-				}
-				err = c.WriteJSON(res)
-				if err != nil {
-					log.Println("write:", err)
-					break
-				}
+				writeJsonLocked("diffRes", string(syncFileMetasBytes))
 				break
 			case "sync":
 				req := SyncReq{}
@@ -166,7 +160,7 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 					log.Printf(PreLog + " sync, write file success: %s", fileMeta.FilePath)
 				}
 				if req.DeployCmd != "" {
-					go execDeploy(req.DeployCmd)
+					go execDeploy(req.DeployCmd, req.DeployKillCmd)
 				}
 				break
 
@@ -175,20 +169,24 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func execDeploy(deployCmd string) {
+func writeJsonLocked(typ string, data string) {
+	mut.Lock()
+	_ = defaultConn.WriteJSON(WsResMessage{
+		typ,
+		data,
+	})
+	mut.Unlock()
+}
+
+func execDeploy(deployCmd string, deployKillCmd string) {
 	if executingCmd != nil {
 		err := executingCmd.Process.Kill()
 		if err != nil {
-			_ = defaultConn.WriteJSON(WsResMessage{
-				"syncRes",
-				"kill failed, err:" + err.Error(),
-			})
+			writeJsonLocked("syncRes", "kill failed, err:" + err.Error())
 			log.Println("kill failed, err:" + err.Error())
+			_ = exec.Command("sh", "-c", deployKillCmd).Start()
 		} else {
-			_ = defaultConn.WriteJSON(WsResMessage{
-				"syncRes",
-				"kill success",
-			})
+			writeJsonLocked("syncRes", "kill success")
 			log.Println("kill success")
 		}
 	}
@@ -197,27 +195,18 @@ func execDeploy(deployCmd string) {
 	stderr, _ := executingCmd.StderrPipe()
 	err := executingCmd.Start()
 	if err != nil {
-		_ = defaultConn.WriteJSON(WsResMessage{
-			"syncRes",
-			"cmd start failed, err:" + err.Error(),
-		})
+		writeJsonLocked("syncRes", "cmd start failed, err:" + err.Error())
 		log.Println("cmd start failed, err:" + err.Error())
 		return
 	}
-	_ = defaultConn.WriteJSON(WsResMessage{
-		"syncRes",
-		"cmd start success",
-	})
+	writeJsonLocked("syncRes", "cmd start success")
 	log.Println("cmd start success")
 
 	stdoutScanner := bufio.NewScanner(stdout)
 	stdoutScanner.Split(bufio.ScanLines)
 	for stdoutScanner.Scan() {
 		line := stdoutScanner.Text()
-		_ = defaultConn.WriteJSON(WsResMessage{
-			"deployStdout",
-			line,
-		})
+		writeJsonLocked("deployStdout", line)
 		fmt.Printf( "[stdout] %s\n", line)
 	}
 
@@ -225,18 +214,13 @@ func execDeploy(deployCmd string) {
 	stderrScanner.Split(bufio.ScanLines)
 	for stderrScanner.Scan() {
 		line := stderrScanner.Text()
-		_ = defaultConn.WriteJSON(WsResMessage{
-			"deployStderr",
-			line,
-		})
+		writeJsonLocked("deployStderr", line)
 		fmt.Printf("[stderr] %s\n", line)
 	}
+
 	err = executingCmd.Wait()
 	if err != nil {
-		_ = defaultConn.WriteJSON(WsResMessage{
-			"syncRes",
-			"cmd wait failed, err:" + err.Error(),
-		})
+		writeJsonLocked("syncRes", "cmd wait failed, err:" + err.Error())
 		log.Printf("cmd wait failed, err:" + err.Error())
 	}
 }
@@ -303,16 +287,10 @@ func handleInterrupt() {
 	if executingCmd != nil {
 		err := executingCmd.Process.Kill()
 		if err != nil {
-			_ = defaultConn.WriteJSON(WsResMessage{
-				"syncRes",
-				"interrupt, kill failed, err:" + err.Error(),
-			})
+			writeJsonLocked("syncRes", "interrupt, kill failed, err:" + err.Error())
 			log.Println("interrupt, kill failed, err:" + err.Error())
 		} else {
-			_ = defaultConn.WriteJSON(WsResMessage{
-				"syncRes",
-				"interrupt, kill success",
-			})
+			writeJsonLocked("syncRes", "interrupt, kill success")
 			log.Println("interrupt, kill success")
 		}
 	}
