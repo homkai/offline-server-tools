@@ -36,3 +36,4 @@
 ## TODO
 - 命令行生成默认配置文件模板
 - kill上次命令后延迟&重试exec
+- 个别情况下stderr没有同步到client
