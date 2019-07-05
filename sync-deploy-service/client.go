@@ -300,17 +300,13 @@ func connectWs(done chan struct{}) {
 				} else {
 					log.Printf(PreLog + " no diff, skiped all changed fileds")
 				}
-				break
 			case "syncRes":
 				data := wsResMsg.Data
 				log.Printf(PreLog + " syncRes %s", data)
-				break
 			case "deployStdout":
 				fmt.Printf("[stdout] %s\n", wsResMsg.Data)
-				break
 			case "deployStderr":
 				fmt.Printf("[stderr] %s\n", wsResMsg.Data)
-				break
 			}
 		}
 	}()

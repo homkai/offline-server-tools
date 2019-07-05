@@ -112,7 +112,6 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 				}
 				syncFileMetasBytes, _ := json.Marshal(needSyncs)
 				writeJsonLocked("diffRes", string(syncFileMetasBytes))
-				break
 			case "sync":
 				req := SyncReq{}
 				err = gob.NewDecoder(bytes.NewBuffer(wsReqMsg.Data)).Decode(&req)
@@ -162,8 +161,6 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 				if req.DeployCmd != "" {
 					go execDeploy(req.DeployCmd, req.DeployKillCmd)
 				}
-				break
-
 			}
 		}
 	}
@@ -171,11 +168,11 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 
 func writeJsonLocked(typ string, data string) {
 	mut.Lock()
+	defer mut.Unlock()
 	_ = defaultConn.WriteJSON(WsResMessage{
 		typ,
 		data,
 	})
-	mut.Unlock()
 }
 
 func execDeploy(deployCmd string, deployKillCmd string) {
@@ -184,12 +181,18 @@ func execDeploy(deployCmd string, deployKillCmd string) {
 		if err != nil {
 			writeJsonLocked("syncRes", "kill failed, err:" + err.Error())
 			log.Println("kill failed, err:" + err.Error())
-			_ = exec.Command("sh", "-c", deployKillCmd).Start()
+			if deployKillCmd != "" {
+				_ = exec.Command("sh", "-c", deployKillCmd).Start()
+			}
 		} else {
 			writeJsonLocked("syncRes", "kill success")
 			log.Println("kill success")
 		}
 	}
+
+	// fix start failed after kill
+	time.Sleep(time.Duration(2) * time.Second)
+
 	executingCmd = exec.Command("sh", "-c", deployCmd)
 	stdout, _ := executingCmd.StdoutPipe()
 	stderr, _ := executingCmd.StderrPipe()
@@ -220,8 +223,8 @@ func execDeploy(deployCmd string, deployKillCmd string) {
 
 	err = executingCmd.Wait()
 	if err != nil {
-		writeJsonLocked("syncRes", "cmd wait failed, err:" + err.Error())
-		log.Printf("cmd wait failed, err:" + err.Error())
+		writeJsonLocked("syncRes", "cmd exec failed, err:" + err.Error())
+		log.Printf("cmd exec failed, err:" + err.Error())
 	}
 }
 
